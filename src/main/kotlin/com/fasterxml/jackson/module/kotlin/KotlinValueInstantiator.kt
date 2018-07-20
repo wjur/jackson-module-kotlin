@@ -16,6 +16,7 @@ import java.lang.reflect.Method
 import kotlin.reflect.KParameter
 import kotlin.reflect.jvm.isAccessible
 import kotlin.reflect.jvm.javaType
+import kotlin.reflect.jvm.jvmErasure
 
 internal class KotlinValueInstantiator(src: StdValueInstantiator, private val cache: ReflectionCache) : StdValueInstantiator(src) {
     @Suppress("UNCHECKED_CAST")
@@ -30,11 +31,7 @@ internal class KotlinValueInstantiator(src: StdValueInstantiator, private val ca
         val callableParameters = arrayOfNulls<KParameter>(props.size)
         val jsonParamValueList = arrayOfNulls<Any>(props.size)
 
-        callable.parameters.forEachIndexed { idx, paramDef ->
-            if (paramDef.kind == KParameter.Kind.INSTANCE || paramDef.kind == KParameter.Kind.EXTENSION_RECEIVER) {
-                // we shouldn't have an instance or receiver parameter and if we do, just go with default Java-ish behavior
-                return super.createFromObjectWith(ctxt, props, buffer)
-            }
+        callable.parameters.withoutInstanceAndExtensionReceiver().forEachIndexed { idx, paramDef ->
             val jsonProp = props[idx]
             val isMissing = !buffer.hasParameter(jsonProp)
 
@@ -77,6 +74,12 @@ internal class KotlinValueInstantiator(src: StdValueInstantiator, private val ca
                     callableParametersByName[paramDef] = jsonParamValueList[idx]
                 }
             }
+
+            if (callable.parameters.hasInstanceAndExtensionReceiver()) {
+                val firstParameter = callable.parameters[0]
+                callableParametersByName[firstParameter] = firstParameter.type.jvmErasure.objectInstance
+            }
+
             callable.callBy(callableParametersByName)
         }
 
@@ -95,6 +98,19 @@ internal class KotlinValueInstantiator(src: StdValueInstantiator, private val ca
     }
 
     private fun SettableBeanProperty.hasInjectableValueId(): Boolean = injectableValueId != null
+
+    private fun List<KParameter>.hasInstanceAndExtensionReceiver(): Boolean =
+            first().kind.isInstanceOrExtensionReceiver()
+
+    private fun List<KParameter>.withoutInstanceAndExtensionReceiver(): List<KParameter> =
+            if (this.hasInstanceAndExtensionReceiver()) {
+                drop(1)
+            } else {
+                this
+            }
+
+    private fun KParameter.Kind.isInstanceOrExtensionReceiver(): Boolean =
+            this == KParameter.Kind.INSTANCE || this == KParameter.Kind.EXTENSION_RECEIVER
 }
 
 internal class KotlinInstantiators(private val cache: ReflectionCache) : ValueInstantiators {
